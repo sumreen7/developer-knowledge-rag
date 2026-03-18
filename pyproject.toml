@@ -1,0 +1,81 @@
+# pyproject.toml
+# This file tells Python tooling everything about your project.
+# pip, pytest, ruff, and mypy all read from here.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "developer-docs-ai-assistant"
+version = "0.1.0"
+description = "A RAG-powered AI assistant for developer documentation"
+requires-python = ">=3.11"
+
+# Core runtime dependencies — what the app needs to run
+dependencies = [
+    # LangChain: the orchestration layer connecting LLM + retrieval + prompts
+    "langchain>=0.2.0",
+    "langchain-community>=0.2.0",   # Third-party integrations (ChromaDB, Ollama)
+    "langchain-ollama>=0.1.0",      # Ollama-specific LangChain adapter
+
+    # ChromaDB: the vector database that stores and searches embeddings
+    "chromadb>=0.5.0",
+
+    # SentenceTransformers: converts text into numerical vectors (embeddings)
+    "sentence-transformers>=3.0.0",
+
+    # FastAPI: the web framework for our REST API endpoint
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",    # ASGI server that runs FastAPI
+
+    # Streamlit: the chat UI
+    "streamlit>=1.35.0",
+
+    # Document loading utilities
+    "pypdf>=4.0.0",                  # PDF parsing
+    "unstructured>=0.14.0",          # Generic document parsing
+    "python-docx>=1.1.0",           # Word document parsing
+
+    # Configuration and environment management
+    "python-dotenv>=1.0.0",          # Loads .env files into os.environ
+    "pydantic>=2.7.0",               # Data validation (FastAPI uses this internally)
+    "pydantic-settings>=2.3.0",      # Settings management from env vars
+
+    # HTTP client for Ollama API calls
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+# Development tools — only installed when developing, not in production
+dev = [
+    "pytest>=8.0.0",                 # Test runner
+    "pytest-asyncio>=0.23.0",        # Async test support
+    "pytest-cov>=5.0.0",             # Test coverage reporting
+    "ruff>=0.4.0",                   # Fast Python linter + formatter
+    "mypy>=1.10.0",                  # Static type checker
+    "httpx>=0.27.0",                 # For testing FastAPI with TestClient
+]
+
+eval = [
+    # RAG evaluation tools — installed separately for Phase 10
+    "ragas>=0.1.0",                  # RAG-specific metrics (faithfulness, relevancy)
+    "datasets>=2.19.0",              # HuggingFace datasets for eval sets
+]
+
+[tool.setuptools.packages.find]
+where = ["."]                        # Look for packages starting from project root
+include = ["src*"]                   # Only package src/ and its subfolders
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]               # Where pytest looks for tests
+asyncio_mode = "auto"               # All async tests run automatically
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "UP"]      # Check errors, pyflakes, imports, upgrade hints
+ignore = []
+
+[tool.mypy]
+python_version = "3.11"
+strict = false                       # Start lenient, tighten as project matures
