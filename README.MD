@@ -61,7 +61,7 @@ curl http://localhost:8000/health
 
 ---
 
-## Running the ingestion pipeline
+## Running the ingestion + chunking pipeline
 
 Add your documentation files (`.md`, `.txt`, `.pdf`) to `data/raw/`, then run:
 ```bash
@@ -70,11 +70,23 @@ python -m src.ingestion.run_ingestion
 
 Example output:
 ```
-INGESTION REPORT — 3 total documents
-  api_endpoints.md: 1 document(s)
-  authentication.md: 1 document(s)
-  getting_started.txt: 1 document(s)
+========================================
+INGESTION + CHUNKING REPORT
+========================================
+Documents loaded:  3
+Total chunks:      4
+Avg chunk length:  317 chars
+Min chunk length:  99 chars
+Max chunk length:  459 chars
+========================================
+Chunk 1 — api_endpoints.md (0 of 1)
+Chunk 2 — authentication.md (0 of 2)
+Chunk 3 — authentication.md (1 of 2)
+Chunk 4 — getting_started.txt (0 of 1)
 ```
+
+Each chunk inherits the source document's metadata so every answer
+can be traced back to the exact file it came from.
 
 ---
 
@@ -82,6 +94,8 @@ INGESTION REPORT — 3 total documents
 ```bash
 .venv/bin/pytest tests/ -v
 ```
+
+Current test count: **20 passing**
 
 ---
 
@@ -91,8 +105,8 @@ INGESTION REPORT — 3 total documents
 |-------|-------------|--------|
 | 1 | Project setup, config, health check API | ✅ Done |
 | 2 | Document ingestion pipeline | ✅ Done |
-| 3 | Document chunking | 🔄 Next |
-| 4 | Embeddings + ChromaDB vector store | Pending |
+| 3 | Document chunking | ✅ Done |
+| 4 | Embeddings + ChromaDB vector store | 🔄 Next |
 | 5 | Retrieval pipeline | Pending |
 | 6 | Ollama LLM integration | Pending |
 | 7 | RAG pipeline | Pending |
@@ -103,22 +117,41 @@ INGESTION REPORT — 3 total documents
 
 ---
 
+## How chunking works
+
+Each document is split into overlapping pieces using LangChain's
+`RecursiveCharacterTextSplitter`. It cuts at natural boundaries in
+this order: paragraph → line → sentence → word. The overlap ensures
+answers that span two sections are never lost.
+```
+chunk_size    = 512 characters   (set in .env)
+chunk_overlap = 50 characters    (set in .env)
+```
+
+---
+
 ## Project structure
 ```
 developer-knowledge-rag/
 ├── src/
-│   ├── ingestion/       # document loading pipeline
-│   ├── embeddings/      # embedding generation
-│   ├── retrieval/       # vector search
-│   ├── llm/             # Ollama integration
-│   ├── rag/             # full RAG pipeline
-│   ├── api/             # FastAPI endpoints
-│   └── config.py        # centralized settings
-├── tests/               # mirrors src/ structure
-├── data/raw/            # your documentation files go here
-├── vectorstore/         # ChromaDB files (auto-generated)
-├── ui/                  # Streamlit chat interface
-└── pyproject.toml       # dependencies and project config
+│   ├── ingestion/
+│   │   ├── loader.py        # loads .md .txt .pdf → Document objects
+│   │   ├── chunker.py       # splits Documents into chunks
+│   │   └── run_ingestion.py # entry point: load + chunk + report
+│   ├── embeddings/          # Phase 4
+│   ├── retrieval/           # Phase 5
+│   ├── llm/                 # Phase 6
+│   ├── rag/                 # Phase 7
+│   ├── api/                 # Phase 8
+│   └── config.py            # centralized settings
+├── tests/
+│   └── ingestion/
+│       ├── test_loader.py   # 7 tests
+│       └── test_chunker.py  # 9 tests
+├── data/raw/                # your documentation files go here
+├── vectorstore/             # ChromaDB files (auto-generated, Phase 4)
+├── ui/                      # Streamlit chat interface (Phase 9)
+└── pyproject.toml           # dependencies and project config
 ```
 
 ---
@@ -126,5 +159,5 @@ developer-knowledge-rag/
 ## Adding your own documentation
 
 Drop any `.md`, `.txt`, or `.pdf` file into `data/raw/` and re-run the
-ingestion pipeline. The system will automatically load, chunk, embed, and
-index it — no code changes needed.
+ingestion pipeline. The system will automatically load, chunk, embed,
+and index it — no code changes needed.
