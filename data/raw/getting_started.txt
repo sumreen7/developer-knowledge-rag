@@ -1,0 +1,11 @@
+Getting Started with the Developer API
+
+Step 1: Create an account at https://developer.example.com
+Step 2: Navigate to API Keys in your dashboard
+Step 3: Generate a new API key and store it securely
+Step 4: Install the SDK: pip install example-sdk
+Step 5: Initialize the client:
+  from example_sdk import Client
+  client = Client(api_key="your_key_here")
+
+Rate limits: 1000 requests per hour for free tier.
