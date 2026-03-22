@@ -7,6 +7,7 @@ grounded, source-cited answers — powered by a local LLM running on your machin
 ---
 
 ## How it works
+
 ```
 Your docs (Markdown, PDF, text)
         ↓
@@ -29,25 +30,27 @@ Your docs (Markdown, PDF, text)
 
 ## Tech stack
 
-| Component      | Technology                        |
-|----------------|-----------------------------------|
-| Orchestration  | LangChain                         |
-| Local LLM      | Ollama (Mistral 7B / Phi-3 Mini)  |
-| Vector DB      | ChromaDB                          |
-| Embeddings     | SentenceTransformers              |
-| API            | FastAPI                           |
-| UI             | Streamlit                         |
-| Deployment     | Docker                            |
+| Component     | Technology                              |
+|---------------|-----------------------------------------|
+| Orchestration | LangChain                               |
+| Local LLM     | Ollama (Mistral 7B / Phi-3 Mini)        |
+| Vector DB     | ChromaDB                                |
+| Embeddings    | SentenceTransformers (all-MiniLM-L6-v2) |
+| API           | FastAPI                                 |
+| UI            | Streamlit                               |
+| Deployment    | Docker                                  |
 
 ---
 
 ## Getting started
+
 ```bash
 # Clone and set up
 git clone https://github.com/sumreen7/developer-knowledge-rag.git
 cd developer-knowledge-rag
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+pip install langchain-chroma langchain-huggingface langchain-text-splitters markdown
 cp .env.example .env
 
 # Start Ollama in a separate terminal
@@ -61,103 +64,119 @@ curl http://localhost:8000/health
 
 ---
 
-## Running the ingestion + chunking pipeline
+## Running the full ingestion pipeline
 
 Add your documentation files (`.md`, `.txt`, `.pdf`) to `data/raw/`, then run:
+
 ```bash
 python -m src.ingestion.run_ingestion
 ```
 
-Example output:
+This runs the complete pipeline in one command:
+
 ```
-========================================
-INGESTION + CHUNKING REPORT
-========================================
-Documents loaded:  3
-Total chunks:      4
-Avg chunk length:  317 chars
-Min chunk length:  99 chars
-Max chunk length:  459 chars
-========================================
-Chunk 1 — api_endpoints.md (0 of 1)
-Chunk 2 — authentication.md (0 of 2)
-Chunk 3 — authentication.md (1 of 2)
-Chunk 4 — getting_started.txt (0 of 1)
+1. Load    — reads all files from data/raw/
+2. Chunk   — splits into 512-char overlapping pieces
+3. Embed   — converts each chunk to a 384-number vector
+4. Store   — saves vectors + text + metadata to ChromaDB
 ```
 
-Each chunk inherits the source document's metadata so every answer
-can be traced back to the exact file it came from.
+Example output:
+
+```
+========================================
+FULL PIPELINE REPORT
+========================================
+Documents loaded:   3
+Chunks created:     4
+Chunks stored:      4
+Embedding model:    all-MiniLM-L6-v2
+Vector store:       ./vectorstore
+========================================
+Pipeline complete. Ready for Phase 5 — retrieval.
+```
+
+---
+
+## How embeddings work
+
+Every chunk of text is converted into 384 numbers by the
+`all-MiniLM-L6-v2` model. Chunks with similar meaning produce
+similar numbers. When a developer asks a question, the question
+is also converted to 384 numbers — and ChromaDB finds the chunks
+whose numbers are closest.
+
+This is why the system can answer "how do I log in?" even though
+the docs say "Bearer token authentication" — same meaning,
+similar numbers, matched correctly.
 
 ---
 
 ## Running tests
+
 ```bash
 .venv/bin/pytest tests/ -v
 ```
 
-Current test count: **20 passing**
+Current test count: **26 passing**
 
 ---
 
 ## Build phases
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Project setup, config, health check API | ✅ Done |
-| 2 | Document ingestion pipeline | ✅ Done |
-| 3 | Document chunking | ✅ Done |
-| 4 | Embeddings + ChromaDB vector store | 🔄 Next |
-| 5 | Retrieval pipeline | Pending |
-| 6 | Ollama LLM integration | Pending |
-| 7 | RAG pipeline | Pending |
-| 8 | FastAPI inference endpoint | Pending |
-| 9 | Chat UI | Pending |
-| 10 | Evaluation | Pending |
-| 11 | Docker deployment | Pending |
-
----
-
-## How chunking works
-
-Each document is split into overlapping pieces using LangChain's
-`RecursiveCharacterTextSplitter`. It cuts at natural boundaries in
-this order: paragraph → line → sentence → word. The overlap ensures
-answers that span two sections are never lost.
-```
-chunk_size    = 512 characters   (set in .env)
-chunk_overlap = 50 characters    (set in .env)
-```
+| Phase | Description                        | Status  |
+|-------|------------------------------------|---------|
+| 1     | Project setup, config, health API  | ✅ Done |
+| 2     | Document ingestion pipeline        | ✅ Done |
+| 3     | Document chunking                  | ✅ Done |
+| 4     | Embeddings + ChromaDB vector store | ✅ Done |
+| 5     | Retrieval pipeline                 | 🔄 Next |
+| 6     | Ollama LLM integration             | Pending |
+| 7     | RAG pipeline                       | Pending |
+| 8     | FastAPI inference endpoint         | Pending |
+| 9     | Chat UI                            | Pending |
+| 10    | Evaluation                         | Pending |
+| 11    | Docker deployment                  | Pending |
 
 ---
 
 ## Project structure
+
 ```
 developer-knowledge-rag/
 ├── src/
 │   ├── ingestion/
-│   │   ├── loader.py        # loads .md .txt .pdf → Document objects
-│   │   ├── chunker.py       # splits Documents into chunks
-│   │   └── run_ingestion.py # entry point: load + chunk + report
-│   ├── embeddings/          # Phase 4
-│   ├── retrieval/           # Phase 5
-│   ├── llm/                 # Phase 6
-│   ├── rag/                 # Phase 7
-│   ├── api/                 # Phase 8
-│   └── config.py            # centralized settings
+│   │   ├── loader.py          # loads .md .txt .pdf → Documents
+│   │   ├── chunker.py         # splits Documents into chunks
+│   │   └── run_ingestion.py   # entry point: load → chunk → embed → store
+│   ├── embeddings/
+│   │   └── embedder.py        # converts chunks to vectors, manages ChromaDB
+│   ├── retrieval/             # Phase 5 — search ChromaDB by meaning
+│   ├── llm/                   # Phase 6 — Ollama integration
+│   ├── rag/                   # Phase 7 — full RAG pipeline
+│   ├── api/                   # Phase 8 — FastAPI endpoints
+│   └── config.py              # centralized settings from .env
 ├── tests/
+│   ├── embeddings/
+│   │   └── test_embedder.py   # 6 tests
 │   └── ingestion/
-│       ├── test_loader.py   # 7 tests
-│       └── test_chunker.py  # 9 tests
-├── data/raw/                # your documentation files go here
-├── vectorstore/             # ChromaDB files (auto-generated, Phase 4)
-├── ui/                      # Streamlit chat interface (Phase 9)
-└── pyproject.toml           # dependencies and project config
+│       ├── test_loader.py     # 7 tests
+│       └── test_chunker.py    # 9 tests
+├── data/raw/                  # put your documentation files here
+├── vectorstore/               # ChromaDB files (auto-generated)
+├── ui/                        # Streamlit chat interface (Phase 9)
+└── pyproject.toml             # dependencies and project config
 ```
 
 ---
 
 ## Adding your own documentation
 
-Drop any `.md`, `.txt`, or `.pdf` file into `data/raw/` and re-run the
-ingestion pipeline. The system will automatically load, chunk, embed,
-and index it — no code changes needed.
+Drop any `.md`, `.txt`, or `.pdf` file into `data/raw/` and re-run:
+
+```bash
+python -m src.ingestion.run_ingestion
+```
+
+The system will load, chunk, embed, and index it automatically.
+No code changes needed.
