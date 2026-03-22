@@ -2,28 +2,21 @@
 
 A production-quality RAG (Retrieval-Augmented Generation) system that lets
 developers ask natural language questions about documentation and receive
-grounded, source-cited answers — powered by a local LLM running on your machine.
+grounded, source-cited answers — powered by a local LLM running entirely
+on your machine. No API keys. No internet required after setup.
 
 ---
 
-## How it works
+## Live demo flow
 
 ```
-Your docs (Markdown, PDF, text)
+Developer types: "How do I authenticate with the API?"
         ↓
-  Ingestion pipeline       ← loads and labels every document
+System searches ChromaDB for relevant doc chunks
         ↓
-  Chunker                  ← splits docs into searchable pieces
+Mistral reads the chunks and writes a grounded answer
         ↓
-  Embeddings + ChromaDB    ← converts text to vectors, stores them
-        ↓
-  Developer asks a question
-        ↓
-  Retrieval pipeline       ← finds the most relevant chunks
-        ↓
-  Ollama (Mistral/Phi-3)   ← generates an answer using those chunks
-        ↓
-  Answer + source citation ← "Use Bearer tokens... [source: authentication.md]"
+UI shows the answer + source cards with relevance scores
 ```
 
 ---
@@ -37,78 +30,107 @@ Your docs (Markdown, PDF, text)
 | Vector DB     | ChromaDB                                |
 | Embeddings    | SentenceTransformers (all-MiniLM-L6-v2) |
 | API           | FastAPI                                 |
-| UI            | Streamlit                               |
-| Deployment    | Docker                                  |
+| Chat UI       | Streamlit                               |
+| Deployment    | Docker (Phase 11)                       |
 
 ---
 
 ## Getting started
 
 ```bash
-# Clone and set up
+# 1. Clone and set up
 git clone https://github.com/sumreen7/developer-knowledge-rag.git
 cd developer-knowledge-rag
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pip install langchain-chroma langchain-huggingface langchain-text-splitters markdown
+pip install langchain-chroma langchain-huggingface langchain-ollama langchain-text-splitters markdown pytest-mock
 cp .env.example .env
 
-# Start Ollama in a separate terminal
-ollama serve
+# 2. Pull a local model (one time)
 ollama pull mistral
 
-# Run the health check
-.venv/bin/uvicorn src.api.main:app --reload
-curl http://localhost:8000/health
+# 3. Add your documentation files to data/raw/
+# Supported: .md  .txt  .pdf
+
+# 4. Run the ingestion pipeline
+python -m src.ingestion.run_ingestion
+
+# 5. Start the API (Terminal 1)
+.venv/bin/uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+
+# 6. Start the chat UI (Terminal 2)
+streamlit run ui/app.py
 ```
+
+Open `http://localhost:8501` in your browser.
 
 ---
 
-## Running the full ingestion pipeline
+## Adding your own documentation
 
-Add your documentation files (`.md`, `.txt`, `.pdf`) to `data/raw/`, then run:
+Drop any `.md`, `.txt`, or `.pdf` file into `data/raw/` then re-run:
 
 ```bash
+# Clean re-index (recommended when editing existing docs)
+rm -rf vectorstore/
 python -m src.ingestion.run_ingestion
-```
 
-This runs the complete pipeline in one command:
-
-```
-1. Load    — reads all files from data/raw/
-2. Chunk   — splits into 512-char overlapping pieces
-3. Embed   — converts each chunk to a 384-number vector
-4. Store   — saves vectors + text + metadata to ChromaDB
-```
-
-Example output:
-
-```
-========================================
-FULL PIPELINE REPORT
-========================================
-Documents loaded:   3
-Chunks created:     4
-Chunks stored:      4
-Embedding model:    all-MiniLM-L6-v2
-Vector store:       ./vectorstore
-========================================
-Pipeline complete. Ready for Phase 5 — retrieval.
+# Then restart the API
+pkill -f uvicorn
+.venv/bin/uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ---
 
-## How embeddings work
+## API endpoints
 
-Every chunk of text is converted into 384 numbers by the
-`all-MiniLM-L6-v2` model. Chunks with similar meaning produce
-similar numbers. When a developer asks a question, the question
-is also converted to 384 numbers — and ChromaDB finds the chunks
-whose numbers are closest.
+| Method | Path      | Description                          |
+|--------|-----------|--------------------------------------|
+| GET    | `/health` | Pipeline status + model info         |
+| POST   | `/query`  | Ask a question, get answer + sources |
+| GET    | `/docs`   | Interactive Swagger UI               |
 
-This is why the system can answer "how do I log in?" even though
-the docs say "Bearer token authentication" — same meaning,
-similar numbers, matched correctly.
+Example query:
+
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How do I authenticate with the API?"}'
+```
+
+Example response:
+
+```json
+{
+  "question": "How do I authenticate with the API?",
+  "answer": "Use Bearer tokens. Send POST /auth/token...",
+  "sources": [
+    {
+      "file_name": "authentication.md",
+      "chunk_index": 0,
+      "content_preview": "Authentication Guide...",
+      "similarity_score": 0.611
+    }
+  ],
+  "model": "mistral",
+  "num_chunks_retrieved": 3
+}
+```
+
+---
+
+## Verifying answers
+
+Every answer includes source cards showing which document and chunk it
+came from. To verify manually:
+
+```bash
+# See exact chunks retrieved for any question
+python -m src.retrieval.run_retrieval "your question here"
+
+# Check the raw document
+cat data/raw/authentication.md
+```
 
 ---
 
@@ -118,25 +140,25 @@ similar numbers, matched correctly.
 .venv/bin/pytest tests/ -v
 ```
 
-Current test count: **26 passing**
+Current test count: **63 passing**
 
 ---
 
 ## Build phases
 
-| Phase | Description                        | Status  |
-|-------|------------------------------------|---------|
-| 1     | Project setup, config, health API  | ✅ Done |
-| 2     | Document ingestion pipeline        | ✅ Done |
-| 3     | Document chunking                  | ✅ Done |
-| 4     | Embeddings + ChromaDB vector store | ✅ Done |
-| 5     | Retrieval pipeline                 | 🔄 Next |
-| 6     | Ollama LLM integration             | Pending |
-| 7     | RAG pipeline                       | Pending |
-| 8     | FastAPI inference endpoint         | Pending |
-| 9     | Chat UI                            | Pending |
-| 10    | Evaluation                         | Pending |
-| 11    | Docker deployment                  | Pending |
+| Phase | Description                        | Status     |
+|-------|------------------------------------|------------|
+| 1     | Project setup, config, health API  | ✅ Done    |
+| 2     | Document ingestion pipeline        | ✅ Done    |
+| 3     | Document chunking                  | ✅ Done    |
+| 4     | Embeddings + ChromaDB vector store | ✅ Done    |
+| 5     | Retrieval pipeline                 | ✅ Done    |
+| 6     | Ollama LLM integration             | ✅ Done    |
+| 7     | RAG pipeline                       | ✅ Done    |
+| 8     | FastAPI inference endpoint         | ✅ Done    |
+| 9     | Chat UI (Streamlit)                | ✅ Done    |
+| 10    | Evaluation (RAG metrics)           | 🔄 Next    |
+| 11    | Docker deployment                  | Pending    |
 
 ---
 
@@ -148,35 +170,43 @@ developer-knowledge-rag/
 │   ├── ingestion/
 │   │   ├── loader.py          # loads .md .txt .pdf → Documents
 │   │   ├── chunker.py         # splits Documents into chunks
-│   │   └── run_ingestion.py   # entry point: load → chunk → embed → store
+│   │   └── run_ingestion.py   # load → chunk → embed → store
 │   ├── embeddings/
-│   │   └── embedder.py        # converts chunks to vectors, manages ChromaDB
-│   ├── retrieval/             # Phase 5 — search ChromaDB by meaning
-│   ├── llm/                   # Phase 6 — Ollama integration
-│   ├── rag/                   # Phase 7 — full RAG pipeline
-│   ├── api/                   # Phase 8 — FastAPI endpoints
-│   └── config.py              # centralized settings from .env
-├── tests/
-│   ├── embeddings/
-│   │   └── test_embedder.py   # 6 tests
-│   └── ingestion/
-│       ├── test_loader.py     # 7 tests
-│       └── test_chunker.py    # 9 tests
-├── data/raw/                  # put your documentation files here
-├── vectorstore/               # ChromaDB files (auto-generated)
-├── ui/                        # Streamlit chat interface (Phase 9)
-└── pyproject.toml             # dependencies and project config
+│   │   └── embedder.py        # SentenceTransformers + ChromaDB
+│   ├── retrieval/
+│   │   ├── retriever.py       # similarity search
+│   │   └── run_retrieval.py   # interactive retrieval test
+│   ├── llm/
+│   │   ├── ollama_client.py   # Ollama / Mistral integration
+│   │   └── run_llm_test.py    # LLM connection test
+│   ├── rag/
+│   │   ├── pipeline.py        # full RAG: retrieve → generate
+│   │   └── run_rag.py         # end-to-end test script
+│   ├── api/
+│   │   └── main.py            # FastAPI endpoints
+│   └── config.py              # settings from .env
+├── tests/                     # 63 passing tests
+├── ui/
+│   └── app.py                 # Streamlit chat interface
+├── data/raw/                  # put your docs here
+├── vectorstore/               # ChromaDB (auto-generated)
+└── pyproject.toml
 ```
 
 ---
 
-## Adding your own documentation
+## How chunking works
 
-Drop any `.md`, `.txt`, or `.pdf` file into `data/raw/` and re-run:
+Documents are split into 512-character overlapping pieces using
+`RecursiveCharacterTextSplitter`. It cuts at natural boundaries:
+paragraph → line → sentence → word. The 50-character overlap ensures
+answers spanning section boundaries are never lost.
 
-```bash
-python -m src.ingestion.run_ingestion
-```
+---
 
-The system will load, chunk, embed, and index it automatically.
-No code changes needed.
+## How embeddings work
+
+Each chunk is converted to a 384-number vector by `all-MiniLM-L6-v2`.
+Chunks with similar meaning produce similar vectors. At query time the
+question is embedded using the same model and ChromaDB returns the
+closest matching chunks by cosine similarity.
