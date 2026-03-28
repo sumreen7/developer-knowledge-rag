@@ -1,0 +1,21 @@
+### .dockerignore (project root)
+```
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+vectorstore/
+evaluation_results/
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+.DS_Store
+.vscode/
+.idea/
+Dockerfile
+Dockerfile.ui
+docker-compose.yml
+.dockerignore

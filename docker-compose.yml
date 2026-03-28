@@ -1,0 +1,92 @@
+# docker-compose.yml
+# Usage:
+#   docker-compose up -d ollama          # start Ollama first
+#   docker-compose exec ollama ollama pull mistral   # download model
+#   docker-compose --profile ingestion up ingestion  # ingest docs
+#   docker-compose up -d api ui          # start the app
+#   docker-compose down                  # stop everything
+
+version: "3.8"
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: devdocs-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devdocs-ingestion
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CHROMA_PERSIST_DIRECTORY=/app/vectorstore
+      - DATA_DIRECTORY=/app/data/raw
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+      - vectorstore_data:/app/vectorstore
+    depends_on:
+      ollama:
+        condition: service_healthy
+    command: ["python", "-m", "src.ingestion.run_ingestion"]
+    profiles:
+      - ingestion
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devdocs-api
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=mistral
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - CHROMA_PERSIST_DIRECTORY=/app/vectorstore
+      - CHROMA_COLLECTION_NAME=docs
+      - PIPELINE_MODE=naive
+    volumes:
+      - vectorstore_data:/app/vectorstore
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8000/health'); exit(0 if r.status_code == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: devdocs-ui
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+    name: devdocs-ollama-data
+  vectorstore_data:
+    name: devdocs-vectorstore-data
+

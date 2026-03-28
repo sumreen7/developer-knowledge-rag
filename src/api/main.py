@@ -1,13 +1,9 @@
 # src/api/main.py
-# FastAPI application with two endpoints:
-#   POST /query  — takes a question, returns a RAG answer with sources
-#   GET  /health — checks all pipeline components are running
-#
-# The RAGPipeline is initialized ONCE at startup and reused for all requests.
-# This is critical for performance — loading the embedding model and
-# connecting to Ollama takes several seconds. We don't want that per request.
+# Supports both naive and agentic RAG modes via PIPELINE_MODE env var.
+# Set PIPELINE_MODE=agentic in .env to use agentic mode.
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -18,9 +14,6 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ── Request / Response models ─────────────────────────────────────────────────
-# Pydantic models define the shape of data coming in and going out.
-# FastAPI uses these for automatic validation and the /docs UI.
 
 class QueryRequest(BaseModel):
     question: str = Field(
@@ -39,7 +32,6 @@ class QueryRequest(BaseModel):
 
 
 class SourceModel(BaseModel):
-    """A single source document cited in the answer."""
     file_name: str
     chunk_index: int
     content_preview: str
@@ -47,69 +39,65 @@ class SourceModel(BaseModel):
 
 
 class QueryResponse(BaseModel):
-    """What the API returns from /query."""
     question: str
     answer: str
     sources: list[SourceModel]
     model: str
     num_chunks_retrieved: int
+    agent_steps: int = 0
+    search_queries: list[str] = []
 
 
-# ── App lifecycle ─────────────────────────────────────────────────────────────
-# The lifespan context manager runs startup/shutdown logic.
-# We initialize the RAG pipeline here so it's ready before the first request.
-
-pipeline = None   # module-level — shared across all requests
+pipeline = None
+pipeline_mode = os.environ.get("PIPELINE_MODE", "naive")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize the RAG pipeline on startup, clean up on shutdown."""
-    global pipeline
+    global pipeline, pipeline_mode
 
-    logger.info("Starting up — initializing RAG pipeline...")
+    logger.info(f"Starting up — pipeline mode: {pipeline_mode}")
     try:
-        from src.rag.pipeline import RAGPipeline
-        pipeline = RAGPipeline(k=settings.chroma_collection_name and 3)
-        logger.info("RAG pipeline ready")
+        if pipeline_mode == "agentic":
+            from src.rag.agentic_pipeline import AgenticRAGPipeline
+            pipeline = AgenticRAGPipeline(k=3, max_iterations=4)
+            logger.info("Agentic RAG pipeline ready")
+        else:
+            from src.rag.pipeline import RAGPipeline
+            pipeline = RAGPipeline(k=3)
+            logger.info("Naive RAG pipeline ready")
     except Exception as e:
-        logger.error(f"Failed to initialize RAG pipeline: {e}")
-        # Don't crash on startup — health endpoint will report degraded state
+        logger.error(f"Failed to initialize pipeline: {e}")
 
-    yield   # application runs here
-
+    yield
     logger.info("Shutting down")
     pipeline = None
 
-
-# ── FastAPI app ───────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="Developer Docs AI Assistant",
     description=(
         "Ask natural language questions about developer documentation. "
-        "Answers are grounded in your docs and include source citations."
+        "Supports both naive and agentic RAG modes."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],    # tighten this in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
-
 @app.get("/")
 async def root():
-    """Root endpoint — points developers to the docs and query endpoint."""
     return {
         "message": "Developer Docs AI Assistant",
+        "pipeline_mode": pipeline_mode,
         "docs": "/docs",
         "query": "POST /query",
         "health": "/health",
@@ -118,16 +106,11 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """
-    Health check endpoint.
-    Returns status of all pipeline components.
-    Used by Docker HEALTHCHECK and monitoring systems.
-    """
     if pipeline is None:
         return {
             "status": "degraded",
             "pipeline": "not initialized",
-            "ollama": "unknown",
+            "pipeline_mode": pipeline_mode,
             "config": {
                 "ollama_model": settings.ollama_model,
                 "embedding_model": settings.embedding_model,
@@ -139,6 +122,7 @@ async def health_check():
     return {
         "status": pipeline_health.get("pipeline", "unknown"),
         **pipeline_health,
+        "pipeline_mode": pipeline_mode,
         "config": {
             "ollama_model": settings.ollama_model,
             "embedding_model": settings.embedding_model,
@@ -149,38 +133,26 @@ async def health_check():
 
 @app.post("/query", response_model=QueryResponse)
 async def query_docs(request: QueryRequest):
-    """
-    Answer a developer's question using the RAG pipeline.
-
-    Retrieves relevant documentation chunks, passes them to the local LLM,
-    and returns a grounded answer with source citations.
-
-    Example request:
-        POST /query
-        {"question": "How do I authenticate with the API?"}
-
-    Example response:
-        {
-            "question": "How do I authenticate with the API?",
-            "answer": "Use Bearer tokens...",
-            "sources": [{"file_name": "authentication.md", ...}],
-            "model": "mistral",
-            "num_chunks_retrieved": 3
-        }
-    """
     if pipeline is None:
         raise HTTPException(
             status_code=503,
-            detail="RAG pipeline not initialized. Check /health for details.",
+            detail="RAG pipeline not initialized. Check /health.",
         )
 
     try:
         response = pipeline.query(request.question)
-        return QueryResponse(**response.to_dict())
+        result = response.to_dict()
+
+        if "agent_steps" not in result:
+            result["agent_steps"] = 0
+        if "search_queries" not in result:
+            result["search_queries"] = []
+
+        return QueryResponse(**result)
 
     except Exception as e:
         logger.error(f"Query failed: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Query failed: {str(e)}",
-        ) 
+        )
