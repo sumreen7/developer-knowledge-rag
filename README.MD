@@ -194,18 +194,43 @@ open http://localhost:8501
 
 ## Adding Your Own Documentation
 
-Drop any `.md`, `.txt`, or `.pdf` file into `data/raw/` and re-run ingestion:
+Drop any `.md`, `.txt`, or `.pdf` file into `data/raw/` and run ingestion:
 
 ```bash
-# Clear old vectorstore to avoid duplicates
-rm -rf vectorstore/
-
-# Re-ingest
 python -m src.ingestion.run_ingestion
 ```
 
-The system will load, chunk, embed, and index your documents automatically.
-No code changes needed.
+The pipeline uses **incremental ingestion** — it queries ChromaDB's metadata index
+for already-embedded file names and skips them automatically. Only new, previously
+unseen documents get chunked, embedded, and stored. No duplicate vectors, no
+redundant computation, no manual vectorstore cleanup.
+
+### Ingestion Modes
+
+| Mode | Command | Behavior |
+|------|---------|----------|
+| **Incremental** (default) | `python -m src.ingestion.run_ingestion` | Skips already-indexed files, processes only new ones |
+| **Force re-index** | `python -m src.ingestion.run_ingestion --force` | Deletes vectorstore, re-embeds entire corpus from scratch |
+| **Single-file re-index** | `python -m src.ingestion.run_ingestion --reindex auth.md` | Deletes stale chunks for one file, re-embeds it |
+
+### Example: Adding a New Document
+
+```bash
+# Drop a new file into the data directory
+cp deployment_guide.md data/raw/
+
+# Run ingestion — only the new file gets processed
+python -m src.ingestion.run_ingestion
+
+# Output:
+# Skipping 4 already-ingested file(s)
+# deployment_guide.md → 3 chunk(s)
+# New files ingested: 1
+# Total in store:     9
+```
+
+Use `--reindex` when a document has been edited and needs re-embedding,
+or `--force` when you want to rebuild the entire vector index from scratch.
 
 ---
 
@@ -307,13 +332,13 @@ developer-knowledge-rag/
 │   ├── api/
 │   │   └── main.py                # FastAPI — POST /query, GET /health
 │   ├── embeddings/
-│   │   └── embedder.py            # SentenceTransformers → ChromaDB
+│   │   └── embedder.py            # SentenceTransformers → ChromaDB + incremental indexing
 │   ├── evaluation/
 │   │   └── evaluate.py            # RAGAS evaluation script
 │   ├── ingestion/
 │   │   ├── loader.py              # Loads .md, .txt, .pdf files
 │   │   ├── chunker.py             # Splits documents into chunks
-│   │   └── run_ingestion.py       # Full pipeline: load → chunk → embed → store
+│   │   └── run_ingestion.py       # Incremental pipeline: load → chunk → embed → store
 │   ├── llm/
 │   │   └── ollama_client.py       # Mistral via Ollama wrapper
 │   ├── rag/
@@ -347,7 +372,7 @@ developer-knowledge-rag/
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Project setup, config, health check API | ✅ |
-| 2 | Document ingestion pipeline | ✅ |
+| 2 | Document ingestion pipeline with incremental indexing | ✅ |
 | 3 | Document chunking (RecursiveCharacterTextSplitter) | ✅ |
 | 4 | Embeddings + ChromaDB vector store | ✅ |
 | 5 | Retrieval pipeline (similarity search) | ✅ |

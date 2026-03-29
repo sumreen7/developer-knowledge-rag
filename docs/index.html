@@ -262,6 +262,48 @@ li { margin-bottom: 0.4rem; }
     <tr><td><code>.txt</code></td><td>TextLoader</td><td>Plain text files</td></tr>
     <tr><td><code>.pdf</code></td><td>PyPDFLoader</td><td>PDF documents (one Document per page)</td></tr>
   </table>
+
+  <h3>Incremental Ingestion</h3>
+  <p>
+    A naive approach to ingestion would re-process every file every time you run the
+    pipeline — leading to duplicate chunks in the vector store, wasted computation,
+    and polluted search results. This system uses <strong>incremental ingestion</strong>
+    instead.
+  </p>
+  <p>
+    Before processing, the pipeline queries ChromaDB's metadata index for all
+    <code>file_name</code> values already stored. Any file that has been previously
+    chunked and embedded is skipped automatically. Only new, previously unseen
+    documents get processed.
+  </p>
+
+  <div class="callout-accent callout">
+    <div class="callout-title">Three Ingestion Modes</div>
+    <strong>Incremental</strong> (default) — queries ChromaDB for already-indexed file
+    names, skips them, and only processes new documents. No duplicate vectors, no
+    redundant embedding computation.<br><br>
+    <strong>Force re-index</strong> (<code>--force</code>) — deletes the entire
+    vectorstore and re-embeds the full corpus from scratch. Use when the embedding
+    model changes or the vectorstore is corrupted.<br><br>
+    <strong>Single-file re-index</strong> (<code>--reindex filename</code>) — deletes
+    all stale chunks for one specific file, then re-chunks and re-embeds it. Use when
+    a document has been edited and the old vectors are out of date.
+  </div>
+
+  <pre><code># Default — only new files get processed
+python -m src.ingestion.run_ingestion
+
+# Force — delete vectorstore, re-embed everything
+python -m src.ingestion.run_ingestion --force
+
+# Reindex one file — delete old chunks, re-embed
+python -m src.ingestion.run_ingestion --reindex authentication.md</code></pre>
+
+  <p>
+    This means scaling the document corpus is a single-step operation — drop the file
+    into <code>data/raw/</code> and run <code>python -m src.ingestion.run_ingestion</code>.
+    The pipeline handles the rest.
+  </p>
 </section>
 
 <!-- ═══ PHASE 3 ═══ -->
